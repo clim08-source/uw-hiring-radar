@@ -1,0 +1,101 @@
+// SQLite + Prisma: zero-config local persistence.
+// The database file lives at prisma/dev.db (gitignored) and is created by `prisma db push`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+/// A UWaterloo club or student design team.
+model Club {
+  id              String    @id @default(cuid())
+  name            String
+  /// "WUSA" | "DESIGN_TEAM" | "CUSTOM"
+  source          String
+  /// Stable id within the source (WUSA club id, Sedra slug). Null for custom clubs.
+  externalId      String?
+  category        String?
+  description     String?
+  instagramHandle String?
+  websiteUrl      String?
+  linkInBioUrl    String?
+  sourceUrl       String?
+  lastScrapedAt   DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  opportunities ApplicationOpportunity[]
+
+  @@unique([source, externalId])
+  @@index([source])
+}
+
+/// A hiring / application link found on a club's link-in-bio page or website.
+model ApplicationOpportunity {
+  id             String    @id @default(cuid())
+  clubId         String
+  club           Club      @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  title          String
+  /// UW term code, e.g. "F26", "W27", "S27". Null when the link names no term.
+  targetTerm     String?
+  url            String
+  /// "EXEC" | "DIRECTOR" | "SUBTEAM" | "GENERAL" | "VOLUNTEER" | "OTHER"
+  roleType       String    @default("GENERAL")
+  /// "OPEN" (form verified accepting responses) | "UNVERIFIED" | "CLOSED"
+  status         String    @default("UNVERIFIED")
+  /// "google-forms" | "typeform" | "airtable" | "tally" | "microsoft-forms" | "web" ...
+  formProvider   String?
+  deadline       DateTime?
+  confidence     Float     @default(0.5)
+  /// "llm:gemini" | "llm:openai" | "keyword"
+  classifier     String    @default("keyword")
+  reason         String?
+  discoveredAt   DateTime  @default(now())
+  lastVerifiedAt DateTime  @default(now())
+
+  tracked TrackedApplication[]
+
+  @@unique([clubId, url])
+  @@index([status])
+  @@index([targetTerm])
+}
+
+/// A card in the user's personal application tracker.
+model TrackedApplication {
+  id            String                  @id @default(cuid())
+  opportunityId String?
+  opportunity   ApplicationOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  clubName      String
+  roleTitle     String
+  targetTerm    String?
+  url           String?
+  /// "SAVED" | "APPLIED" | "INTERVIEW" | "OFFER" | "REJECTED"
+  status        String                  @default("SAVED")
+  notes         String?
+  deadline      DateTime?
+  appliedAt     DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  @@index([status])
+}
+
+/// One run of the discovery + scrape pipeline, used for the progress UI.
+model ScrapeRun {
+  id                 String    @id @default(cuid())
+  /// "RUNNING" | "DONE" | "FAILED"
+  status             String    @default("RUNNING")
+  phase              String    @default("starting")
+  clubsDiscovered    Int       @default(0)
+  clubsTotal         Int       @default(0)
+  clubsScraped       Int       @default(0)
+  opportunitiesFound Int       @default(0)
+  classifier         String?
+  error              String?
+  startedAt          DateTime  @default(now())
+  finishedAt         DateTime?
+}
