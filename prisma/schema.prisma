@@ -23,6 +23,16 @@ model Club {
   instagramHandle String?
   websiteUrl      String?
   linkInBioUrl    String?
+  /// The club's <name>.notion.site, when one was found.
+  notionUrl       String?
+  /// When Notion was last searched for this club (searched at most weekly).
+  notionCheckedAt DateTime?
+  /// Instagram bio text and links, from Apify or Serper. bioLinks is a JSON array of URLs.
+  instagramBio    String?
+  bioLinks        String?
+  /// "apify" | "serper"
+  bioSource       String?
+  bioCheckedAt    DateTime?
   sourceUrl       String?
   lastScrapedAt   DateTime?
   createdAt       DateTime  @default(now())
@@ -95,6 +105,10 @@ model ScrapeRun {
   clubsScraped       Int       @default(0)
   opportunitiesFound Int       @default(0)
   classifier         String?
+  /// "apify" | "serper" | null (website fallback)
+  bioSource          String?
+  biosFound          Int       @default(0)
+  bioError           String?
   error              String?
   startedAt          DateTime  @default(now())
   finishedAt         DateTime?

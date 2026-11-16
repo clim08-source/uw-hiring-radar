@@ -2,15 +2,16 @@
 // classifies them, and verifies that application forms are still accepting responses.
 
 import * as cheerio from "cheerio";
-import { classifyLinks, isFormUrl, type CandidateLink, type ClassifiedLink } from "./classifier";
+import { classifyLinks, classifyWithKeywords, isFormUrl, type CandidateLink, type ClassifiedLink } from "./classifier";
 import { isLinkInBioUrl } from "./discovery";
 import { fetchPage, hostMatches, hostOf, mapLimit, normalizeUrl } from "./http";
+import { isNotionSiteUrl, loadNotionPage, parseNotionUrl, probeNotionSite, scrapeNotionPages } from "./notion";
 import { extractDeadline, pickTargetTerm } from "./terms";
 
 export interface ScrapedPage {
   ok: boolean;
   url: string;
-  kind: "linktree" | "link-in-bio" | "website";
+  kind: "linktree" | "link-in-bio" | "website" | "notion";
   title: string | null;
   text: string;
   links: CandidateLink[];
@@ -74,7 +75,28 @@ function dedupe(links: CandidateLink[], base: string): CandidateLink[] {
   return [...seen.values()];
 }
 
+/** Notion sites render client-side, so they are read through Notion's public page API instead. */
+async function scrapeNotionLinkPage(url: string): Promise<ScrapedPage> {
+  const failed: ScrapedPage = { ok: false, url, kind: "notion", title: null, text: "", links: [] };
+  const parsed = parseNotionUrl(url);
+  if (!parsed) return failed;
+  const pageId = parsed.pageId ?? (await probeNotionSite(parsed.domain)).site?.homePageId ?? null;
+  if (!pageId) return failed;
+  const scrape = await scrapeNotionPages(parsed.domain, pageId);
+  if (!scrape) return failed;
+  const home = scrape.pages[0];
+  return {
+    ok: true,
+    url: parsed.pageId ? home.url : `https://${parsed.domain}.notion.site`,
+    kind: "notion",
+    title: home.title || null,
+    text: scrape.pages.map((p) => p.text).join(" ").slice(0, 4000),
+    links: dedupe(scrape.candidates, home.url),
+  };
+}
+
 export async function scrapeLinkPage(url: string): Promise<ScrapedPage> {
+  if (isNotionSiteUrl(url)) return scrapeNotionLinkPage(url);
   const page = await fetchPage(url);
   const kind: ScrapedPage["kind"] = hostMatches(url, ["linktr.ee"]) ? "linktree" : isLinkInBioUrl(url) ? "link-in-bio" : "website";
   if (!page.ok) return { ok: false, url, kind, title: null, text: "", links: [] };
@@ -143,6 +165,16 @@ function providerOf(url: string): string {
 /** Fetch an application link and decide whether it still accepts responses. */
 export async function verifyForm(url: string): Promise<FormCheck> {
   const provider = providerOf(url);
+
+  const notion = parseNotionUrl(url);
+  if (notion?.pageId) {
+    const page = await loadNotionPage(notion.domain, notion.pageId);
+    if (!page) return { state: "UNVERIFIED", provider, title: null, detail: "Notion page is not publicly readable" };
+    if (CLOSED_TEXT.test(`${page.title} ${page.text}`)) {
+      return { state: "CLOSED", provider, title: page.title || null, detail: "Notion page says applications are closed" };
+    }
+    return { state: "UNVERIFIED", provider, title: page.title || null, detail: "Notion page is public; no closed notice found" };
+  }
   let page = await fetchPage(url, { timeoutMs: 15_000 });
   // forms.gle shows browsers an app deep-link interstitial instead of redirecting to the form.
   if (page.ok && hostMatches(page.finalUrl, ["forms.gle"])) {
@@ -304,4 +336,85 @@ export async function scrapeClubLinks(clubName: string, targetUrl: string, now: 
   }
 
   return { reachable: true, scrapedUrl: page.url, linksSeen: candidates.length, opportunities };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Step C — multi-target destination scraper
+// ---------------------------------------------------------------------------------------------
+
+export type DestinationKind = "form" | "link-in-bio" | "notion" | "website";
+
+const DIRECT_FORM_HOSTS = ["forms.gle", "airtable.com", "typeform.com", "tally.so", "forms.office.com", "forms.cloud.microsoft", "jotform.com", "fillout.com"];
+const SHORTENER_HOSTS = ["tinyurl.com", "bit.ly", "t.co", "rebrand.ly", "shorturl.at", "cutt.ly", "tiny.cc", "ow.ly", "buff.ly"];
+
+export function isDirectFormUrl(url: string): boolean {
+  if (hostMatches(url, ["docs.google.com"])) return /\/forms\//.test(url);
+  return hostMatches(url, DIRECT_FORM_HOSTS);
+}
+
+/** Which of the four common bio destinations a URL is. */
+export function destinationKind(url: string): DestinationKind {
+  if (isDirectFormUrl(url)) return "form";
+  if (isNotionSiteUrl(url)) return "notion";
+  if (isLinkInBioUrl(url)) return "link-in-bio";
+  return "website";
+}
+
+/**
+ * 1. Direct form in the bio: the link itself is the candidate application. Its title comes from
+ *    the form, and it is dropped only when the form is plainly something else (an event RSVP,
+ *    merch order, feedback form) or names only past terms.
+ */
+async function scrapeDirectForm(url: string, bioText: string, now: Date): Promise<ClubScrapeResult> {
+  const check = await verifyForm(url);
+  const title = check.title?.trim() || "Application form";
+  // The form's own title decides the term; the bio text is only consulted when it names none.
+  const ownVerdict = classifyWithKeywords({ title, url }, now);
+  const verdict = ownVerdict.targetTerm || ownVerdict.reason === "names only past terms" ? ownVerdict : classifyWithKeywords({ title, url, context: bioText }, now);
+  const unrelated = !verdict.isHiring && verdict.reason !== "no hiring keywords" && verdict.confidence < 0.3;
+  if (unrelated) return { reachable: true, scrapedUrl: url, linksSeen: 1, opportunities: [] };
+
+  const closedByTitle = /\bclosed\b/i.test(title);
+  return {
+    reachable: true,
+    scrapedUrl: url,
+    linksSeen: 1,
+    opportunities: [
+      {
+        title: title.slice(0, 140),
+        url,
+        targetTerm: verdict.targetTerm,
+        roleType: verdict.roleType,
+        status: closedByTitle ? "CLOSED" : check.state,
+        formProvider: check.provider,
+        deadline: extractDeadline(`${title} ${bioText}`, now),
+        // A form with no hiring wording is still a form the club put in its bio.
+        confidence: Math.max(verdict.confidence, 0.5),
+        classifier: "keyword",
+        reason: `form linked directly from the Instagram bio; ${verdict.reason} · ${closedByTitle ? "form title says closed" : check.detail}`,
+      },
+    ],
+  };
+}
+
+/**
+ * Scrape one bio destination, whatever it is:
+ *   1. direct form            → the form is the candidate; title + open / closed check
+ *   2. Linktree / Beacons / Carrd → __NEXT_DATA__ JSON and <a> buttons
+ *   3. public Notion page     → headings, sub-pages and outbound form links
+ *   4. club website           → homepage links plus /apply, /join, /recruitment, /hiring pages
+ */
+export async function scrapeDestination(clubName: string, url: string, now: Date = new Date(), bioText = ""): Promise<ClubScrapeResult> {
+  let target = url;
+  // Short links hide the destination type, so follow them first.
+  if (hostMatches(target, SHORTENER_HOSTS)) {
+    const hop = await fetchPage(target, { plainUserAgent: true });
+    if (hop.ok && hop.finalUrl) target = hop.finalUrl;
+  }
+  if (destinationKind(target) === "form") {
+    const result = await scrapeDirectForm(target, bioText, now);
+    // Keep the URL the club actually published as the opportunity's link.
+    return { ...result, scrapedUrl: url, opportunities: result.opportunities.map((o) => ({ ...o, url: normalizeUrl(url) ?? url })) };
+  }
+  return scrapeClubLinks(clubName, target, now);
 }

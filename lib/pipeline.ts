@@ -3,9 +3,11 @@
 
 import { activeClassifierName } from "./classifier";
 import { prisma } from "./db";
-import { discoverAll, resolveLinkInBio, type ClubSource, type DiscoveredClub } from "./discovery";
-import { mapLimit } from "./http";
-import { scrapeClubLinks } from "./scraper";
+import { discoverAll, isLinkInBioUrl, resolveLinkInBio, type ClubSource, type DiscoveredClub } from "./discovery";
+import { mapLimit, normalizeUrl } from "./http";
+import { activeBioSource, fetchInstagramBios } from "./instagram";
+import { findNotionSite, isNotionSiteUrl } from "./notion";
+import { scrapeClubLinks, scrapeDestination, type ClubScrapeResult } from "./scraper";
 
 export interface PipelineOptions {
   /** Which directories to (re)discover. Default: WUSA + design teams. */
@@ -32,31 +34,106 @@ async function upsertClub(c: DiscoveredClub) {
   return prisma.club.create({ data: { ...data, source: c.source, externalId: c.externalId } });
 }
 
-/** Scrape one club and reconcile its opportunities. Returns the number of live opportunities. */
+const NOTION_RECHECK_MS = 7 * 24 * 3600 * 1000;
+const BIO_RECHECK_MS = 20 * 3600 * 1000;
+const MAX_BIO_TARGETS = 4;
+
+function parseBioLinks(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((u): u is string => typeof u === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Step B: read Instagram bios for every club with a handle whose bio is stale, in one batch.
+ * Returns how many bios came back. With no APIFY_API_TOKEN / SERPER_API_KEY this is a no-op and
+ * clubs fall back to the website listed on WUSA / Sedra.
+ */
+export async function refreshInstagramBios(clubIds: string[] | null, now: Date = new Date()): Promise<{ found: number; error: string | null }> {
+  if (!activeBioSource()) return { found: 0, error: null };
+  const clubs = await prisma.club.findMany({
+    where: {
+      instagramHandle: { not: null },
+      ...(clubIds ? { id: { in: clubIds } } : {}),
+      OR: [{ bioCheckedAt: null }, { bioCheckedAt: { lt: new Date(now.getTime() - BIO_RECHECK_MS) } }],
+    },
+    select: { id: true, instagramHandle: true, linkInBioUrl: true },
+  });
+  if (clubs.length === 0) return { found: 0, error: null };
+
+  const { source, bios, error } = await fetchInstagramBios(clubs.map((c) => c.instagramHandle!));
+  for (const club of clubs) {
+    const bio = bios.get(club.instagramHandle!.toLowerCase());
+    // A handle with no result is left unchecked so the next scan retries it.
+    if (!bio) continue;
+    const bioLinkInBio = bio.links.find(isLinkInBioUrl) ?? null;
+    await prisma.club.update({
+      where: { id: club.id },
+      data: {
+        instagramBio: bio.biography?.slice(0, 1000) ?? null,
+        bioLinks: JSON.stringify(bio.links),
+        bioSource: source,
+        bioCheckedAt: now,
+        // The bio is the most current source for a club's Linktree.
+        linkInBioUrl: bioLinkInBio ?? club.linkInBioUrl,
+      },
+    });
+  }
+  return { found: bios.size, error };
+}
+
+/** Scrape one club (link-in-bio page plus its Notion site) and reconcile its opportunities. */
 export async function scrapeClub(clubId: string, now: Date = new Date()): Promise<number> {
   const club = await prisma.club.findUnique({ where: { id: clubId } });
   if (!club) return 0;
 
+  const results: ClubScrapeResult[] = [];
+
+  // Step C: every link from the Instagram bio, whichever of the four destination types it is.
+  const bioTargets = parseBioLinks(club.bioLinks).slice(0, MAX_BIO_TARGETS);
+  for (const target of bioTargets) results.push(await scrapeDestination(club.name, target, now, club.instagramBio ?? ""));
+  const alreadyScraped = new Set(bioTargets.map((u) => normalizeUrl(u) ?? u));
+
+  // Fallback / supplement: the link-in-bio or website known from WUSA / Sedra.
   const resolved = await resolveLinkInBio(club);
-  if (!resolved) {
-    await prisma.club.update({ where: { id: club.id }, data: { lastScrapedAt: now } });
-    return 0;
-  }
-  // Remember a genuine link-in-bio / join page; a bare website fallback is not stored as one.
-  if (!club.linkInBioUrl && resolved.via !== "website") {
-    await prisma.club.update({ where: { id: club.id }, data: { linkInBioUrl: resolved.url } });
-  }
-
-  const result = await scrapeClubLinks(club.name, resolved.url, now);
-  if (!result.reachable) {
-    // Page unreachable: leave existing opportunities alone rather than closing them on a blip.
-    await prisma.club.update({ where: { id: club.id }, data: { lastScrapedAt: now } });
-    return 0;
+  if (resolved && !alreadyScraped.has(normalizeUrl(resolved.url) ?? resolved.url)) {
+    // Remember a genuine link-in-bio / join page; a bare website fallback is not stored as one.
+    if (!club.linkInBioUrl && resolved.via !== "website") {
+      await prisma.club.update({ where: { id: club.id }, data: { linkInBioUrl: resolved.url } });
+    }
+    results.push(await scrapeDestination(club.name, resolved.url, now, club.instagramBio ?? ""));
   }
 
-  const liveUrls: string[] = [];
-  for (const opp of result.opportunities) {
-    liveUrls.push(opp.url);
+  // Also look for <clubname>.notion.site, unless the page above already was the Notion site.
+  // The subdomain search is repeated at most weekly; a known site is re-read on every scan.
+  if (!resolved || !isNotionSiteUrl(resolved.url)) {
+    let notionUrl = club.notionUrl;
+    const stale = !club.notionCheckedAt || now.getTime() - club.notionCheckedAt.getTime() > NOTION_RECHECK_MS;
+    if (stale) {
+      const search = await findNotionSite(club);
+      if (search.site || search.complete) {
+        notionUrl = search.site ? `https://${search.site.domain}.notion.site` : null;
+        await prisma.club.update({ where: { id: club.id }, data: { notionUrl, notionCheckedAt: now } });
+      }
+    }
+    // A workspace with no public home page yields an unreachable result with nothing in it.
+    if (notionUrl) {
+      const notion = await scrapeClubLinks(club.name, notionUrl, now);
+      if (notion.reachable) results.push(notion);
+    }
+  }
+
+  await prisma.club.update({ where: { id: club.id }, data: { lastScrapedAt: now } });
+  if (results.length === 0) return 0;
+
+  const seen = new Set<string>();
+  const opportunities = results.flatMap((r) => r.opportunities).filter((o) => (seen.has(o.url) ? false : (seen.add(o.url), true)));
+
+  for (const opp of opportunities) {
     const data = {
       title: opp.title,
       targetTerm: opp.targetTerm,
@@ -76,14 +153,16 @@ export async function scrapeClub(clubId: string, now: Date = new Date()): Promis
     });
   }
 
-  // Links that disappeared from the page, or stopped classifying as hiring, are closed.
-  await prisma.applicationOpportunity.updateMany({
-    where: { clubId: club.id, url: { notIn: liveUrls }, status: { not: "CLOSED" } },
-    data: { status: "CLOSED", lastVerifiedAt: now, reason: "no longer listed on the club's page" },
-  });
+  // Links that disappeared, or stopped classifying as hiring, are closed — but only when every
+  // page was reachable, so a network blip doesn't close live applications.
+  if (results.every((r) => r.reachable)) {
+    await prisma.applicationOpportunity.updateMany({
+      where: { clubId: club.id, url: { notIn: [...seen] }, status: { not: "CLOSED" } },
+      data: { status: "CLOSED", lastVerifiedAt: now, reason: "no longer listed on the club's page" },
+    });
+  }
 
-  await prisma.club.update({ where: { id: club.id }, data: { lastScrapedAt: now } });
-  return result.opportunities.filter((o) => o.status !== "CLOSED").length;
+  return opportunities.filter((o) => o.status !== "CLOSED").length;
 }
 
 export async function runPipeline(runId: string, opts: PipelineOptions = {}): Promise<void> {
@@ -105,7 +184,15 @@ export async function runPipeline(runId: string, opts: PipelineOptions = {}): Pr
       select: { id: true },
       orderBy: { lastScrapedAt: { sort: "asc", nulls: "first" } },
     });
-    await prisma.scrapeRun.update({ where: { id: runId }, data: { phase: "scraping link-in-bio pages", clubsTotal: clubs.length } });
+    // Step B: Instagram bio links (Apify, else Serper, else skipped).
+    const bioSource = activeBioSource();
+    if (bioSource) {
+      await prisma.scrapeRun.update({ where: { id: runId }, data: { phase: `reading Instagram bios (${bioSource})`, bioSource, clubsTotal: clubs.length } });
+      const bios = await refreshInstagramBios(clubs.map((c) => c.id), now);
+      await prisma.scrapeRun.update({ where: { id: runId }, data: { biosFound: bios.found, bioError: bios.error?.slice(0, 300) ?? null } });
+    }
+
+    await prisma.scrapeRun.update({ where: { id: runId }, data: { phase: "scraping bio destinations", clubsTotal: clubs.length } });
 
     let scraped = 0;
     let found = 0;

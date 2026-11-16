@@ -182,7 +182,9 @@ export function Dashboard() {
           <Stat label="Clubs & teams" value={stats?.clubs} />
           <Stat label="WUSA clubs" value={stats?.clubsBySource.WUSA ?? (stats ? 0 : undefined)} />
           <Stat label="Design teams" value={stats?.clubsBySource.DESIGN_TEAM ?? (stats ? 0 : undefined)} />
+          <Stat label="Instagram bio links" value={stats?.clubsWithBioLinks} />
           <Stat label="With a link-in-bio" value={stats?.clubsWithLinkInBio} />
+          <Stat label="With a Notion site" value={stats?.clubsWithNotion} />
           <Stat label="Open applications" value={stats?.openOpportunities} />
           <div className="ml-auto text-right text-xs text-muted">
             {run ? (
@@ -197,6 +199,12 @@ export function Dashboard() {
               )
             ) : (
               <span>No scan yet — run one to fill the feed.</span>
+            )}
+            {stats && (
+              <div>
+                Instagram bios: {stats.bioSource === "apify" ? "Apify" : stats.bioSource === "serper" ? "Serper search" : "off (using listed websites)"}
+                {run?.bioError ? <span className="text-danger"> · {run.bioError}</span> : null}
+              </div>
             )}
             {stats && <div>Classifier: {stats.classifier === "keyword" ? "keyword fallback (no API key)" : stats.classifier.replace("llm:", "")}</div>}
           </div>

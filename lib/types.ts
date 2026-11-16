@@ -11,6 +11,7 @@ export interface ClubDTO {
   instagramHandle: string | null;
   websiteUrl: string | null;
   linkInBioUrl: string | null;
+  notionUrl: string | null;
   sourceUrl: string | null;
   lastScrapedAt: string | null;
 }
@@ -56,6 +57,9 @@ export interface ScrapeRunDTO {
   clubsScraped: number;
   opportunitiesFound: number;
   classifier: string | null;
+  bioSource: string | null;
+  biosFound: number;
+  bioError: string | null;
   error: string | null;
   startedAt: string;
   finishedAt: string | null;
@@ -65,6 +69,9 @@ export interface StatsDTO {
   clubs: number;
   clubsBySource: Record<string, number>;
   clubsWithLinkInBio: number;
+  clubsWithNotion: number;
+  clubsWithBioLinks: number;
+  bioSource: string | null;
   openOpportunities: number;
   currentTerm: string;
   nextTerm: string;
