@@ -3,16 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "prisma db push --skip-generate && prisma generate",
+    "predev": "node --env-file-if-exists=.env scripts/prepare-db.mjs --push",
     "dev": "next dev",
-    "prebuild": "prisma generate",
-    "build": "next build",
+    "build": "node --env-file-if-exists=.env scripts/prepare-db.mjs --push && next build",
     "start": "next start",
     "lint": "eslint",
-    "db:push": "prisma db push",
+    "db:push": "node --env-file-if-exists=.env scripts/prepare-db.mjs --push",
     "db:studio": "prisma studio",
-    "scrape": "tsx scripts/scrape.ts",
-    "publish:github": "bash scripts/publish-github.sh"
+    "scrape": "tsx --env-file-if-exists=.env scripts/scrape.ts",
+    "publish:github": "bash scripts/publish-github.sh",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@google/genai": "^3.4.0",

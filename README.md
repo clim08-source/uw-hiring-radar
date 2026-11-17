@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 and press **Scan clubs now**. `npm run dev` creates the SQLite database (`prisma/dev.db`) on first run — there is nothing to configure.
+Open http://localhost:3000 and press **Scan clubs now**, and keep the tab open while it scans. `npm run dev` creates the SQLite database (`prisma/dev.db`) on first run — there is nothing to configure.
 
 A full scan covers about 250 clubs and teams and takes a few minutes. You can also run it from the terminal:
 
@@ -20,6 +20,17 @@ npm run scrape                  # discover + scrape everything
 npm run scrape -- --limit 10    # quick run: 10 clubs per source
 npm run scrape -- --skip-discovery
 ```
+
+## Deploying to Vercel
+
+The local SQLite file cannot work on Vercel (its filesystem is read-only and not shared between requests), so a hosted deploy uses Postgres instead. No code changes are needed:
+
+1. In your Vercel project open **Storage → Create Database → Neon (Postgres)** and connect it to the project. This sets `DATABASE_URL` for you.
+2. Under **Settings → Environment Variables** add any keys you use: `APIFY_API_TOKEN`, `SERPER_API_KEY`, `GEMINI_API_KEY` / `OPENAI_API_KEY`.
+3. **Redeploy.** The build runs `scripts/prepare-db.mjs`, which sees the Postgres URL, creates the tables and generates the Prisma client for Postgres.
+4. Open the site and press **Scan clubs now**. Keep the tab open while it scans: the page drives the scan in short steps, because a serverless function cannot keep working after it responds. Closing the tab pauses the scan; reopening resumes it.
+
+Things to know about a public deploy: there are no accounts, so everyone who opens the site shares one tracker, and anyone can start a scan (which spends your Apify / LLM credits).
 
 ## Optional: LLM classification
 
@@ -36,7 +47,7 @@ If an LLM call fails, that club falls back to the keyword classifier. Whatever t
 
 ## How the pipeline works
 
-`POST /api/scrape` starts a run in the background; `GET /api/scrape` reports progress.
+`POST /api/scrape` with an empty body starts a run; the page then calls `POST /api/scrape` with `{ "runId" }` repeatedly, each call doing one step (discovery, Instagram bios, then six clubs at a time) until the run is done. `GET /api/scrape` reports progress. `npm run scrape` runs the same pipeline start to finish from the terminal.
 
 1. **Discovery** — `lib/discovery.ts`
    - **WUSA clubs** (`clubs.wusa.ca`): the directory is a JavaScript app, so club pages are read through the public JSON endpoints the page itself calls (`/api/v1/clubs_listing/active`, `/api/v1/clubs/[id]/profile`) for name, categories, Instagram handle and website / Linktree links.
@@ -73,7 +84,7 @@ Each opportunity ends up with one of three statuses:
 
 | Route | Methods | Purpose |
 | --- | --- | --- |
-| `/api/scrape` | `GET`, `POST` | Run status and stats; start a run (`{ "limit": 10, "sources": ["WUSA"], "skipDiscovery": false }`, all optional) |
+| `/api/scrape` | `GET`, `POST` | Run status and stats; `POST {}` starts a run, `POST { "runId" }` does its next step |
 | `/api/opportunities` | `GET` | Hiring feed (`?includeClosed=1`) |
 | `/api/clubs` | `GET`, `POST` | List clubs; add a custom club `{ "name", "url" }` and scrape it |
 | `/api/tracker` | `GET`, `POST` | Tracked applications; add from the feed `{ "opportunityId" }` or manually |

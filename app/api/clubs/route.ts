@@ -5,6 +5,7 @@ import { isHttpUrl, normalizeUrl } from "@/lib/http";
 import { scrapeClub } from "@/lib/pipeline";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function GET() {
   const clubs = await prisma.club.findMany({

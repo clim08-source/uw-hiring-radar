@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { dbConfigError, prisma } from "@/lib/db";
 import { TRACKER_STATUSES, type TrackerStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const configError = dbConfigError();
+  if (configError) return NextResponse.json({ error: configError }, { status: 503 });
   const items = await prisma.trackedApplication.findMany({ orderBy: { updatedAt: "desc" } });
   return NextResponse.json({ items });
 }

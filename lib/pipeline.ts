@@ -1,5 +1,6 @@
 // Orchestrates discovery → link-in-bio resolution → scrape → classify → persist.
-// Used by /api/scrape (runs in the background of the Node server) and by `npm run scrape`.
+// `npm run scrape` runs it start to finish (runPipeline); the web app runs it as resumable
+// steps (beginRun / stepRun) so it also works on serverless hosts.
 
 import { activeClassifierName } from "./classifier";
 import { prisma } from "./db";
@@ -221,19 +222,94 @@ export async function runPipeline(runId: string, opts: PipelineOptions = {}): Pr
   }
 }
 
-const globalForRun = globalThis as unknown as { activeScrape?: Promise<void> | null };
+// ---------------------------------------------------------------------------------------------
+// Web runs: resumable steps
+// ---------------------------------------------------------------------------------------------
+// A serverless host (Vercel) stops a function when its response is sent, so a scan cannot run in
+// the background of one request. Instead the browser drives it: each POST /api/scrape does one
+// bounded piece of work, saves progress on the ScrapeRun row, and returns. Closing the tab
+// pauses the scan; reopening the page resumes it.
 
-/** Start a pipeline run in the background. Returns the existing run if one is in flight. */
-export async function startPipeline(opts: PipelineOptions = {}): Promise<{ runId: string; alreadyRunning: boolean }> {
-  if (globalForRun.activeScrape) {
-    const running = await prisma.scrapeRun.findFirst({ where: { status: "RUNNING" }, orderBy: { startedAt: "desc" } });
-    if (running) return { runId: running.id, alreadyRunning: true };
-  }
-  // Any RUNNING row left by a server restart is stale.
-  await prisma.scrapeRun.updateMany({ where: { status: "RUNNING" }, data: { status: "FAILED", phase: "interrupted", finishedAt: new Date() } });
-  const run = await prisma.scrapeRun.create({ data: {} });
-  globalForRun.activeScrape = runPipeline(run.id, opts).finally(() => {
-    globalForRun.activeScrape = null;
+const PHASE_DISCOVER = "discovering clubs";
+const PHASE_BIOS = "reading Instagram bios";
+const PHASE_SCRAPE = "scraping bio destinations";
+const STEP_BATCH = 6;
+const STEP_LOCK_MS = 6 * 60 * 1000;
+const RUN_STALE_MS = 3 * 3600 * 1000;
+
+/** Create a run, or return the one already in progress. */
+export async function beginRun(opts: { skipDiscovery?: boolean } = {}) {
+  const active = await prisma.scrapeRun.findFirst({
+    where: { status: "RUNNING", startedAt: { gt: new Date(Date.now() - RUN_STALE_MS) } },
+    orderBy: { startedAt: "desc" },
   });
-  return { runId: run.id, alreadyRunning: false };
+  if (active) return active;
+  await prisma.scrapeRun.updateMany({ where: { status: "RUNNING" }, data: { status: "FAILED", phase: "interrupted", finishedAt: new Date() } });
+  return prisma.scrapeRun.create({
+    data: { phase: opts.skipDiscovery ? PHASE_BIOS : PHASE_DISCOVER, classifier: activeClassifierName(), bioSource: activeBioSource() },
+  });
+}
+
+/** Do the next piece of work for a run. `busy` means another request holds the run right now. */
+export async function stepRun(runId: string) {
+  const now = new Date();
+  const lock = await prisma.scrapeRun.updateMany({
+    where: { id: runId, status: "RUNNING", OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] },
+    data: { lockedUntil: new Date(now.getTime() + STEP_LOCK_MS) },
+  });
+  const run = await prisma.scrapeRun.findUnique({ where: { id: runId } });
+  if (!run || lock.count === 0) return { run, busy: run?.status === "RUNNING" };
+
+  try {
+    if (run.phase === PHASE_DISCOVER) {
+      const discovered = await discoverAll();
+      for (const c of discovered) await upsertClub(c);
+      await prisma.scrapeRun.update({
+        where: { id: runId },
+        data: { clubsDiscovered: discovered.length, clubsTotal: await prisma.club.count(), phase: PHASE_BIOS },
+      });
+    } else if (run.phase === PHASE_BIOS) {
+      const bios = activeBioSource() ? await refreshInstagramBios(null, now) : { found: 0, error: null };
+      await prisma.scrapeRun.update({
+        where: { id: runId },
+        data: { biosFound: bios.found, bioError: bios.error?.slice(0, 300) ?? null, clubsTotal: await prisma.club.count(), phase: PHASE_SCRAPE },
+      });
+    } else {
+      // Clubs not yet scraped during this run.
+      const pending = { OR: [{ lastScrapedAt: null }, { lastScrapedAt: { lt: run.startedAt } }] };
+      const batch = await prisma.club.findMany({ where: pending, select: { id: true }, take: STEP_BATCH });
+      await mapLimit(batch, 3, async (club) => {
+        try {
+          await scrapeClub(club.id, new Date());
+        } catch (err) {
+          console.warn(`[pipeline] scrape failed for club ${club.id}:`, (err as Error).message);
+          // Mark it attempted so one broken club cannot stall the run.
+          await prisma.club.update({ where: { id: club.id }, data: { lastScrapedAt: new Date() } });
+        }
+      });
+      const [remaining, total, found] = await Promise.all([
+        prisma.club.count({ where: pending }),
+        prisma.club.count(),
+        prisma.applicationOpportunity.count({ where: { status: { not: "CLOSED" }, lastVerifiedAt: { gte: run.startedAt } } }),
+      ]);
+      const done = remaining === 0;
+      await prisma.scrapeRun.update({
+        where: { id: runId },
+        data: {
+          clubsTotal: total,
+          clubsScraped: total - remaining,
+          opportunitiesFound: found,
+          ...(done ? { status: "DONE", phase: "done", finishedAt: new Date() } : {}),
+        },
+      });
+    }
+  } catch (err) {
+    await prisma.scrapeRun.update({
+      where: { id: runId },
+      data: { status: "FAILED", phase: "failed", error: (err as Error).message.slice(0, 500), finishedAt: new Date() },
+    });
+  }
+
+  const updated = await prisma.scrapeRun.update({ where: { id: runId }, data: { lockedUntil: null } });
+  return { run: updated, busy: false };
 }

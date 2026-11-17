@@ -1,5 +1,7 @@
 // SQLite + Prisma: zero-config local persistence.
-// The database file lives at prisma/dev.db (gitignored) and is created by `prisma db push`.
+// The database file lives at prisma/dev.db (gitignored) and is created by `npm run dev`.
+// When DATABASE_URL points at Postgres (e.g. on Vercel), scripts/prepare-db.mjs builds a
+// Postgres copy of this schema instead — keep the models compatible with both.
 
 generator client {
   provider = "prisma-client-js"
@@ -110,6 +112,8 @@ model ScrapeRun {
   biosFound          Int       @default(0)
   bioError           String?
   error              String?
+  /// Set while one request is working on this run, so two browser tabs don't double up.
+  lockedUntil        DateTime?
   startedAt          DateTime  @default(now())
   finishedAt         DateTime?
 }

@@ -32,7 +32,6 @@ export function Dashboard() {
   const [stats, setStats] = useState<StatsDTO | null>(null);
   const [includeClosed, setIncludeClosed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const lastProgress = useRef("");
 
   const loadFeed = useCallback(async (withClosed: boolean) => setOpportunities(await fetchFeed(withClosed)), []);
   const loadTracker = useCallback(async () => setTracked(await fetchTracker()), []);
@@ -65,30 +64,54 @@ export function Dashboard() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  // While a scan is running, poll its progress and refresh the feed as results land.
+  // While a scan is running, this page drives it: each POST does one step on the server and
+  // returns the updated run. Leaving the page pauses the scan; coming back resumes it.
   const running = run?.status === "RUNNING";
+  const runId = run?.id;
+  const includeClosedRef = useRef(includeClosed);
   useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(async () => {
-      try {
-        const latest = await loadStatus();
-        const progress = `${latest?.status}:${latest?.opportunitiesFound}`;
-        if (progress !== lastProgress.current) {
-          lastProgress.current = progress;
-          await loadFeed(includeClosed);
+    includeClosedRef.current = includeClosed;
+  }, [includeClosed]);
+
+  useEffect(() => {
+    if (!running || !runId) return;
+    let cancelled = false;
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    (async () => {
+      let failures = 0;
+      while (!cancelled) {
+        try {
+          const step = await getJson<{ run: ScrapeRunDTO; busy: boolean }>("/api/scrape", jsonInit("POST", { runId }));
+          if (cancelled) return;
+          failures = 0;
+          setRun(step.run);
+          const [feed, status] = await Promise.all([fetchFeed(includeClosedRef.current), fetchStatus()]);
+          if (cancelled) return;
+          setOpportunities(feed);
+          setStats(status.stats);
+          if (step.run.status !== "RUNNING") return;
+          if (step.busy) await sleep(4000);
+        } catch (e) {
+          if (cancelled) return;
+          failures += 1;
+          if (failures >= 3) {
+            setError(`Scan paused: ${(e as Error).message}. Reload the page to resume.`);
+            return;
+          }
+          await sleep(5000);
         }
-      } catch {
-        // transient; next tick retries
       }
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [running, loadStatus, loadFeed, includeClosed]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [running, runId]);
 
   const startScan = async () => {
     setError(null);
     try {
-      await getJson("/api/scrape", jsonInit("POST", {}));
-      await loadStatus();
+      const { run: started } = await getJson<{ run: ScrapeRunDTO }>("/api/scrape", jsonInit("POST", {}));
+      setRun(started);
     } catch (e) {
       setError((e as Error).message);
     }

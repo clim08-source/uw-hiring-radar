@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
 import { activeClassifierName } from "@/lib/classifier";
-import { prisma } from "@/lib/db";
+import { dbConfigError, prisma } from "@/lib/db";
 import { activeBioSource } from "@/lib/instagram";
-import type { ClubSource } from "@/lib/discovery";
-import { startPipeline } from "@/lib/pipeline";
+import { beginRun, stepRun } from "@/lib/pipeline";
 import { currentTerm, nextTerm } from "@/lib/terms";
 
 export const dynamic = "force-dynamic";
+// One step can include directory discovery or an Apify run; allow it the time.
+export const maxDuration = 300;
 
 /** Latest run + headline stats, polled by the UI. */
 export async function GET() {
+  const configError = dbConfigError();
+  if (configError) return NextResponse.json({ error: configError }, { status: 503 });
   const [run, clubs, bySource, withBio, withNotion, withBioLinks, open] = await Promise.all([
     prisma.scrapeRun.findFirst({ orderBy: { startedAt: "desc" } }),
     prisma.club.count(),
@@ -38,17 +41,22 @@ export async function GET() {
 }
 
 /**
- * Start discovery + scraping in the background.
- * Body (all optional): { "limit": 10, "sources": ["WUSA","DESIGN_TEAM"], "skipDiscovery": false }
+ * Drive a scan one step at a time (works on serverless hosts, where nothing runs after the
+ * response is sent):
+ *   POST {}                       → start a run (or return the one in progress)
+ *   POST { "runId": "…" }         → do the next piece of work and return the updated run
+ * The page keeps calling the second form until the run's status is no longer "RUNNING".
  */
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => ({}))) as { limit?: number; sources?: string[]; skipDiscovery?: boolean };
-  const sources = body.sources?.filter((s): s is ClubSource => s === "WUSA" || s === "DESIGN_TEAM");
-  const limit = Number(body.limit);
-  const { runId, alreadyRunning } = await startPipeline({
-    sources: sources?.length ? sources : undefined,
-    limitPerSource: Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : undefined,
-    skipDiscovery: Boolean(body.skipDiscovery),
-  });
-  return NextResponse.json({ runId, alreadyRunning }, { status: alreadyRunning ? 200 : 202 });
+  const configError = dbConfigError();
+  if (configError) return NextResponse.json({ error: configError }, { status: 503 });
+
+  const body = (await request.json().catch(() => ({}))) as { runId?: string; skipDiscovery?: boolean };
+  if (!body.runId) {
+    const run = await beginRun({ skipDiscovery: Boolean(body.skipDiscovery) });
+    return NextResponse.json({ run, busy: false }, { status: 201 });
+  }
+  const { run, busy } = await stepRun(body.runId);
+  if (!run) return NextResponse.json({ error: "Run not found." }, { status: 404 });
+  return NextResponse.json({ run, busy });
 }

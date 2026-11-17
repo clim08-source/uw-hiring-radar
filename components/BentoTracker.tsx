@@ -55,7 +55,7 @@ export function BentoTracker({ items, onAdd, onUpdate, onRemove }: Props) {
         <h2 id="tracker-heading" className="text-xl font-semibold tracking-tight">
           Application tracker
         </h2>
-        <p className="text-sm text-muted">Drag cards between tiles, or use the stage menu on each card. Saved to your local database.</p>
+        <p className="text-sm text-muted">Drag cards between tiles, or use the stage menu on each card. Saved to the app&apos;s database.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-6 lg:grid-cols-12 lg:auto-rows-[minmax(11rem,auto)]">
