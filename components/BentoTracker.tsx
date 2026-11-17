@@ -13,14 +13,16 @@ interface Props {
 }
 
 const STAGES: Record<TrackerStatus, { label: string; hint: string; dot: string; span: string }> = {
-  SAVED: { label: "Saved", hint: "Bookmark from the feed, or drop a card here", dot: "bg-muted", span: "md:col-span-3 lg:col-span-4 lg:row-span-2" },
-  APPLIED: { label: "Applied", hint: "Submitted and waiting", dot: "bg-accent-strong", span: "md:col-span-3 lg:col-span-4 lg:row-span-2" },
-  INTERVIEW: { label: "Interview", hint: "Coffee chats and interviews", dot: "bg-sky-500", span: "md:col-span-6 lg:col-span-4" },
-  OFFER: { label: "Offer", hint: "You got in", dot: "bg-ok", span: "md:col-span-3 lg:col-span-2" },
-  REJECTED: { label: "Not this term", hint: "Try again next term", dot: "bg-off", span: "md:col-span-3 lg:col-span-2" },
+  SAVED: { label: "Saved", hint: "Bookmark from the feed, or drop a card here", dot: "bg-muted", span: "md:col-span-3 lg:col-span-4 lg:row-span-3" },
+  APPLIED: { label: "Applied", hint: "Submitted and waiting", dot: "bg-accent-strong", span: "md:col-span-3 lg:col-span-4 lg:row-span-3" },
+  INTERVIEW: { label: "Interview", hint: "Coffee chats and interviews", dot: "bg-sky-500", span: "md:col-span-2 lg:col-span-4" },
+  OFFER: { label: "Offer", hint: "You got in", dot: "bg-ok", span: "md:col-span-2 lg:col-span-4" },
+  REJECTED: { label: "Not this term", hint: "Try again next term", dot: "bg-off", span: "md:col-span-2 lg:col-span-4" },
 };
 
-const tile = "rounded-2xl border border-line bg-surface p-4";
+// min-w-0 lets a grid tile shrink below its content width, so long names truncate instead of
+// pushing the card (and its buttons) out of the tile.
+const tile = "min-w-0 rounded-2xl border border-line bg-surface p-4";
 
 export function BentoTracker({ items, onAdd, onUpdate, onRemove }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
@@ -58,9 +60,9 @@ export function BentoTracker({ items, onAdd, onUpdate, onRemove }: Props) {
         <p className="text-sm text-muted">Drag cards between tiles, or use the stage menu on each card. Saved to the app&apos;s database.</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-6 lg:grid-cols-12 lg:auto-rows-[minmax(11rem,auto)]">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-6 lg:grid-cols-12">
         {/* Pipeline summary */}
-        <div className={`${tile} md:col-span-6 lg:col-span-5`}>
+        <div className={`${tile} md:col-span-6 lg:col-span-4`}>
           <h3 className="text-sm font-medium text-muted">Pipeline</h3>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="font-mono text-4xl font-semibold tabular-nums">{items === null ? "–" : total}</span>
@@ -84,7 +86,7 @@ export function BentoTracker({ items, onAdd, onUpdate, onRemove }: Props) {
         </div>
 
         {/* Upcoming deadlines */}
-        <div className={`${tile} md:col-span-3 lg:col-span-3`}>
+        <div className={`${tile} md:col-span-3 lg:col-span-4`}>
           <h3 className="flex items-center gap-1.5 text-sm font-medium text-muted">
             <CalendarClock className="size-4" aria-hidden /> Next deadlines
           </h3>
@@ -95,8 +97,8 @@ export function BentoTracker({ items, onAdd, onUpdate, onRemove }: Props) {
               {upcoming.map((i) => {
                 const d = daysUntil(i.deadline!);
                 return (
-                  <li key={i.id} className="flex items-center justify-between gap-2 text-sm">
-                    <span className="truncate">{i.clubName}</span>
+                  <li key={i.id} className="flex min-w-0 items-center justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate">{i.clubName}</span>
                     <span className={`shrink-0 font-mono text-xs ${d <= 3 ? "text-danger" : "text-muted"}`}>{d === 0 ? "today" : `${d}d`}</span>
                   </li>
                 );
@@ -141,7 +143,7 @@ export function BentoTracker({ items, onAdd, onUpdate, onRemove }: Props) {
                   {STAGES[stage].hint}
                 </p>
               ) : (
-                <ul className={`grid gap-2 ${stage === "INTERVIEW" ? "sm:grid-cols-2 lg:grid-cols-1" : ""}`}>
+                <ul className="grid min-w-0 grid-cols-1 gap-2">
                   {cards.map((item) => (
                     <TrackerCard
                       key={item.id}
@@ -199,7 +201,7 @@ function TrackerCard({
         onDragStart();
       }}
       onDragEnd={onDragEnd}
-      className={`group rounded-xl border border-line bg-bg p-3 ${dragging ? "opacity-40" : ""} ${editing ? "" : "cursor-grab active:cursor-grabbing"}`}
+      className={`group min-w-0 rounded-xl border border-line bg-bg p-3 ${dragging ? "opacity-40" : ""} ${editing ? "" : "cursor-grab active:cursor-grabbing"}`}
     >
       <div className="flex items-start gap-2">
         <GripVertical className="mt-0.5 size-4 shrink-0 text-muted/60" aria-hidden />
@@ -232,7 +234,8 @@ function TrackerCard({
         )
       )}
 
-      <div className="mt-2 flex items-center gap-1.5">
+      {/* Wraps onto a second line in narrow tiles so the buttons always stay inside the card. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1">
         <label className="sr-only" htmlFor={`stage-${item.id}`}>
           Stage for {item.clubName}
         </label>
@@ -240,7 +243,7 @@ function TrackerCard({
           id={`stage-${item.id}`}
           value={item.status}
           onChange={(e) => onUpdate(item.id, { status: e.target.value as TrackerStatus })}
-          className="h-7 rounded-md border border-line bg-surface px-1.5 text-xs"
+          className="h-7 min-w-0 max-w-full rounded-md border border-line bg-surface px-1.5 text-xs"
         >
           {TRACKER_STATUSES.map((s) => (
             <option key={s} value={s}>
@@ -249,12 +252,12 @@ function TrackerCard({
           ))}
         </select>
         {item.deadline && days !== null && (
-          <span className={`inline-flex items-center gap-1 text-xs ${days >= 0 && days <= 3 ? "text-danger" : "text-muted"}`}>
+          <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-xs ${days >= 0 && days <= 3 ? "text-danger" : "text-muted"}`}>
             <CalendarClock className="size-3" aria-hidden />
             {shortDate(item.deadline)}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-0.5">
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <button onClick={() => setEditing(true)} aria-label={`Edit notes for ${item.clubName}`} title="Notes" className="grid size-7 place-items-center rounded-md text-muted hover:bg-surface-2 hover:text-fg">
             <NotebookPen className="size-3.5" aria-hidden />
           </button>
@@ -293,18 +296,18 @@ function QuickAdd({ onAdd }: { onAdd: Props["onAdd"] }) {
     }
   };
 
-  const field = "w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 text-sm placeholder:text-muted";
+  const field = "w-full min-w-0 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-sm placeholder:text-muted";
   return (
     <form onSubmit={submit} className={`${tile} md:col-span-3 lg:col-span-4`}>
       <h3 className="mb-3 flex items-center gap-1.5 text-sm font-medium text-muted">
         <Plus className="size-4" aria-hidden /> Add your own
       </h3>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
         <input required value={form.clubName} onChange={set("clubName")} placeholder="Club or team" aria-label="Club or team" className={field} />
         <input required value={form.roleTitle} onChange={set("roleTitle")} placeholder="Role" aria-label="Role" className={field} />
         <input value={form.targetTerm} onChange={set("targetTerm")} placeholder="Term (W27)" aria-label="Term" maxLength={3} className={`${field} font-mono`} />
         <input type="date" value={form.deadline} onChange={set("deadline")} aria-label="Deadline" className={field} />
-        <input value={form.url} onChange={set("url")} placeholder="Application link (optional)" aria-label="Application link" className={`${field} col-span-2`} />
+        <input value={form.url} onChange={set("url")} placeholder="Application link (optional)" aria-label="Application link" className={`${field} min-[380px]:col-span-2`} />
       </div>
       <div className="mt-3 flex items-center gap-3">
         <button disabled={busy} className="rounded-lg bg-fg px-3 py-1.5 text-sm font-medium text-bg disabled:opacity-60">

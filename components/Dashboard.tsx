@@ -162,7 +162,7 @@ export function Dashboard() {
   const pct = run && run.clubsTotal > 0 ? Math.round((run.clubsScraped / run.clubsTotal) * 100) : 0;
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 pb-20 sm:px-6">
+    <div className="mx-auto w-full min-w-0 max-w-7xl px-4 pb-20 sm:px-6">
       <header className="flex flex-wrap items-center gap-x-6 gap-y-3 py-6">
         <div className="flex items-center gap-3">
           <div className="grid size-10 place-items-center rounded-xl bg-accent text-accent-fg">
@@ -209,7 +209,7 @@ export function Dashboard() {
           <Stat label="With a link-in-bio" value={stats?.clubsWithLinkInBio} />
           <Stat label="With a Notion site" value={stats?.clubsWithNotion} />
           <Stat label="Open applications" value={stats?.openOpportunities} />
-          <div className="ml-auto text-right text-xs text-muted">
+          <div className="ml-auto min-w-0 break-words text-right text-xs text-muted">
             {run ? (
               running ? (
                 <span>

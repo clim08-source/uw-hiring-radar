@@ -91,7 +91,7 @@ export function HiringFeed({ opportunities, trackedOpportunityIds, includeClosed
       {adding && <AddClubForm onAddClub={onAddClub} onDone={() => setAdding(false)} />}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <label className="relative min-w-52 flex-1 sm:max-w-xs">
+        <label className="relative min-w-0 flex-1 basis-52 sm:max-w-xs">
           <span className="sr-only">Search applications</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden />
           <input
@@ -131,7 +131,7 @@ export function HiringFeed({ opportunities, trackedOpportunityIds, includeClosed
             No term named
           </button>
         </div>
-        <div className="ml-auto flex items-center gap-4 text-xs text-muted">
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
           <label className="flex cursor-pointer items-center gap-1.5">
             <input type="checkbox" checked={verifiedOnly} onChange={(e) => setVerifiedOnly(e.target.checked)} className="accent-(--accent-strong)" />
             Verified open only
@@ -203,7 +203,7 @@ function OpportunityCard({ o, tracked, onTrack }: { o: OpportunityDTO; tracked: 
   const closed = o.status === "CLOSED";
   const days = o.deadline ? daysUntil(o.deadline) : null;
   return (
-    <li className={`flex flex-col rounded-2xl border border-line bg-surface p-4 ${closed ? "opacity-60" : ""}`}>
+    <li className={`flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-4 ${closed ? "opacity-60" : ""}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="truncate text-xs text-muted">
           {SOURCE_LABEL[o.club.source] ?? o.club.source}
@@ -212,8 +212,8 @@ function OpportunityCard({ o, tracked, onTrack }: { o: OpportunityDTO; tracked: 
         <StatusBadge status={o.status} />
       </div>
 
-      <h3 className="text-sm font-semibold leading-snug">{o.club.name}</h3>
-      <p className="mt-0.5 line-clamp-2 text-sm text-muted" title={o.reason ?? undefined}>
+      <h3 className="break-words text-sm font-semibold leading-snug">{o.club.name}</h3>
+      <p className="mt-0.5 line-clamp-2 break-words text-sm text-muted" title={o.reason ?? undefined}>
         {o.title}
       </p>
 
@@ -228,7 +228,7 @@ function OpportunityCard({ o, tracked, onTrack }: { o: OpportunityDTO; tracked: 
         )}
       </div>
 
-      <div className="mt-auto flex items-center justify-between gap-2 pt-4">
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
         <div className="min-w-0 text-xs text-muted">
           <div className="truncate">{hostLabel(o.url)}</div>
           <div className="flex items-center gap-2">
@@ -290,14 +290,14 @@ function AddClubForm({ onAddClub, onDone }: { onAddClub: Props["onAddClub"]; onD
   const field = "rounded-lg border border-line bg-bg px-3 py-2 text-sm placeholder:text-muted";
   return (
     <form onSubmit={submit} className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface p-3">
-      <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Club name" aria-label="Club name" className={`${field} w-48`} />
+      <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Club name" aria-label="Club name" className={`${field} min-w-0 flex-1 basis-40`} />
       <input
         required
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="linktr.ee/yourclub or website"
         aria-label="Link-in-bio or website URL"
-        className={`${field} min-w-56 flex-1`}
+        className={`${field} min-w-0 flex-[2] basis-56`}
       />
       <button disabled={busy} className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-60">
         {busy ? "Checking…" : "Add & scan"}
