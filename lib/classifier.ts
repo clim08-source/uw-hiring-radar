@@ -5,7 +5,8 @@
 import { hostMatches } from "./http";
 import { currentTerm, nextTerm, pickTargetTerm, termFromCode, termStatus } from "./terms";
 
-export type RoleType = "EXEC" | "DIRECTOR" | "SUBTEAM" | "GENERAL" | "VOLUNTEER" | "OTHER";
+// MEMBER = open general-membership sign-up; GENERAL = an application with no specific role named.
+export type RoleType = "EXEC" | "DIRECTOR" | "SUBTEAM" | "GENERAL" | "VOLUNTEER" | "MEMBER" | "OTHER";
 
 export interface CandidateLink {
   title: string;
@@ -109,11 +110,15 @@ const STRONG_POSITIVE =
 
 const WEAK_POSITIVE = /\b(join( us)?|get involved|careers?|jobs?|volunteer|become a (member|volunteer)|membership|member sign[- ]?up|sign[- ]?up|interest form|exec|director|subteam|lead|coordinator)\b/i;
 
-function roleTypeOf(text: string): RoleType {
+export function roleTypeOf(text: string): RoleType {
+  // "General Member Application" is membership even though it says "application".
+  if (/\b(general members?|membership|members? (sign|form|regist|interest)|become a member)/i.test(text)) return "MEMBER";
   if (/\bdirector/i.test(text)) return "DIRECTOR";
   if (/\b(exec|execs|executive|vp|vice[- ]president|president|treasurer|secretary|leads?)\b/i.test(text)) return "EXEC";
   if (/\b(subteam|sub-team|team lead|engineering|firmware|mechanical|electrical|software|developer|designer|design team)\b/i.test(text)) return "SUBTEAM";
   if (/\bvolunteer/i.test(text)) return "VOLUNTEER";
+  // A sign-up or interest form with no role and no application wording is a membership sign-up.
+  if (/\b(sign[- ]?up|signup|interest form|join (us|now|the club|our club)|register)\b/i.test(text) && !/\b(appl(y|ication|ications)|apps|hiring|recruit\w*|positions?|roles?|team)\b/i.test(text)) return "MEMBER";
   return "GENERAL";
 }
 
@@ -205,13 +210,14 @@ For each link decide whether it is an ACTIVE application to join the club's team
 - NOT hiring: Discord / social links, merch, sponsorship or partner packages, donations, event sign-ups or tickets, newsletters, general websites, resources, competitions, elections.
 - A link whose only named term has already ended (before ${cur.code}) is expired: set "expired": true and "isHiring": false.
 - A link with no term that reads like a standing application is hiring with lower confidence.
+- roleType: use MEMBER for open general-membership sign-ups or interest forms anyone can fill in; use EXEC / DIRECTOR / SUBTEAM / VOLUNTEER for selective roles; GENERAL for an application that names no specific role.
 
 Club: ${clubName}
 Links:
 ${list}
 
 Return ONLY JSON of the form:
-{"results":[{"index":0,"isHiring":true,"title":"short clean title","targetTerm":"W27","roleType":"EXEC|DIRECTOR|SUBTEAM|GENERAL|VOLUNTEER|OTHER","expired":false,"confidence":0.0,"reason":"short reason"}]}
+{"results":[{"index":0,"isHiring":true,"title":"short clean title","targetTerm":"W27","roleType":"EXEC|DIRECTOR|SUBTEAM|GENERAL|VOLUNTEER|MEMBER|OTHER","expired":false,"confidence":0.0,"reason":"short reason"}]}
 Include one entry for every link index. "targetTerm" is a term code like "W27" or null.`;
 }
 
@@ -237,7 +243,7 @@ async function callOpenAI(prompt: string): Promise<string> {
   return res.choices[0]?.message?.content ?? "";
 }
 
-const ROLE_TYPES: RoleType[] = ["EXEC", "DIRECTOR", "SUBTEAM", "GENERAL", "VOLUNTEER", "OTHER"];
+const ROLE_TYPES: RoleType[] = ["EXEC", "DIRECTOR", "SUBTEAM", "GENERAL", "VOLUNTEER", "MEMBER", "OTHER"];
 
 async function classifyWithLlm(clubName: string, links: CandidateLink[], now: Date, name: string): Promise<ClassifiedLink[]> {
   const prompt = buildPrompt(clubName, links, now);

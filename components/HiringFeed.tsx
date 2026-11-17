@@ -2,7 +2,7 @@
 
 import { AtSign, Bookmark, BookmarkCheck, CalendarClock, CircleCheck, CircleDashed, CircleX, ExternalLink, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { daysUntil, hostLabel, ROLE_LABEL, shortDate, SOURCE_LABEL, timeAgo } from "@/lib/format";
+import { daysUntil, hostLabel, isMembership, ROLE_LABEL, shortDate, SOURCE_LABEL, timeAgo } from "@/lib/format";
 import type { OpportunityDTO } from "@/lib/types";
 
 interface Props {
@@ -22,6 +22,12 @@ const SOURCES = [
   { key: "CUSTOM", label: "Custom" },
 ];
 
+const KINDS = [
+  { key: "ALL", label: "All types", hint: "Everything" },
+  { key: "ROLES", label: "Exec & team roles", hint: "Exec, director, subteam, volunteer and other applications you are selected for" },
+  { key: "MEMBER", label: "General membership", hint: "Open membership sign-ups and interest forms" },
+];
+
 const PREVIEW_COUNT = 9;
 
 const chip = (active: boolean) =>
@@ -33,6 +39,7 @@ export function HiringFeed({ opportunities, trackedOpportunityIds, includeClosed
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("ALL");
   const [term, setTerm] = useState("ALL");
+  const [kind, setKind] = useState("ALL");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -48,11 +55,18 @@ export function HiringFeed({ opportunities, trackedOpportunityIds, includeClosed
     return (opportunities ?? []).filter((o) => {
       if (source !== "ALL" && o.club.source !== source) return false;
       if (term === "NONE" ? o.targetTerm !== null : term !== "ALL" && o.targetTerm !== term) return false;
+      if (kind === "ROLES" && isMembership(o.roleType)) return false;
+      if (kind === "MEMBER" && !isMembership(o.roleType)) return false;
       if (verifiedOnly && o.status !== "OPEN") return false;
       if (q && !`${o.title} ${o.club.name} ${o.club.category ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [opportunities, query, source, term, verifiedOnly]);
+  }, [opportunities, query, source, term, kind, verifiedOnly]);
+
+  const kindCounts = useMemo(() => {
+    const member = (opportunities ?? []).filter((o) => isMembership(o.roleType)).length;
+    return { ROLES: (opportunities?.length ?? 0) - member, MEMBER: member };
+  }, [opportunities]);
 
   return (
     <section aria-labelledby="feed-heading" className="mb-12">
@@ -91,6 +105,15 @@ export function HiringFeed({ opportunities, trackedOpportunityIds, includeClosed
           {SOURCES.map((s) => (
             <button key={s.key} onClick={() => setSource(s.key)} aria-pressed={source === s.key} className={chip(source === s.key)}>
               {s.label}
+            </button>
+          ))}
+        </div>
+        <span className="hidden h-5 w-px bg-line sm:block" />
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Application type">
+          {KINDS.map((k) => (
+            <button key={k.key} onClick={() => setKind(k.key)} aria-pressed={kind === k.key} title={k.hint} className={chip(kind === k.key)}>
+              {k.label}
+              {k.key !== "ALL" && opportunities !== null && <span className="ml-1.5 font-mono opacity-70">{kindCounts[k.key as "ROLES" | "MEMBER"]}</span>}
             </button>
           ))}
         </div>

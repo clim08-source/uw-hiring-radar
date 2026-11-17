@@ -55,7 +55,7 @@ model ApplicationOpportunity {
   /// UW term code, e.g. "F26", "W27", "S27". Null when the link names no term.
   targetTerm     String?
   url            String
-  /// "EXEC" | "DIRECTOR" | "SUBTEAM" | "GENERAL" | "VOLUNTEER" | "OTHER"
+  /// "EXEC" | "DIRECTOR" | "SUBTEAM" | "GENERAL" (role not named) | "VOLUNTEER" | "MEMBER" (membership sign-up) | "OTHER"
   roleType       String    @default("GENERAL")
   /// "OPEN" (form verified accepting responses) | "UNVERIFIED" | "CLOSED"
   status         String    @default("UNVERIFIED")

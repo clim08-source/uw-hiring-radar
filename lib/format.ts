@@ -37,7 +37,13 @@ export const ROLE_LABEL: Record<string, string> = {
   EXEC: "Exec",
   DIRECTOR: "Director",
   SUBTEAM: "Subteam",
-  GENERAL: "General",
+  GENERAL: "Application",
   VOLUNTEER: "Volunteer",
+  MEMBER: "Membership",
   OTHER: "Other",
 };
+
+/** Feed filter groups: selective roles you apply for vs. open general-membership sign-ups. */
+export function isMembership(roleType: string): boolean {
+  return roleType === "MEMBER";
+}
